@@ -1,14 +1,17 @@
 {
   "name": "ton-cdt-swap",
   "version": "1.0.0",
+  "description": "Fixed rate swap between TON and CDT",
   "main": "src/swap.js",
   "type": "module",
   "scripts": {
     "start": "node src/swap.js"
   },
   "dependencies": {
-    "node-fetch": "^3.3.2",
-    "@ton/ton": "^13.9.0",
-    "@ton/crypto": "^3.2.0"
+    "dotenv": "^16.3.1",
+    "@ton/ton": "^13.6.0",
+    "@ton/crypto": "^3.2.0",
+    "axios": "^1.6.2",
+    "bignumber.js": "^9.1.1"
   }
 }
