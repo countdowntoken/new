@@ -1,37 +1,26 @@
-name: Swap CDT and TON
+name: CDT Swap Listener
 
 on:
-  schedule:
-    - cron: "*/5 * * * *" # اجرای هر 5 دقیقه
   workflow_dispatch:
+  schedule:
+    - cron: "*/5 * * * *" # Runs every 5 minutes
 
 jobs:
-  swap:
+  check-swaps:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: 18
 
       - name: Install dependencies
         run: |
-          echo "📦 Installing dependencies..."
-          npm install
-          echo "✅ Dependencies installed."
-
-      - name: Check environment variables
-        run: |
-          echo "🔍 Checking environment variables..."
-          if [ -z "${{ secrets.TONCENTER_API_KEY }}" ]; then echo "❌ TONCENTER_API_KEY is missing!"; exit 1; fi
-          if [ -z "${{ secrets.WALLET_ADDRESS }}" ]; then echo "❌ WALLET_ADDRESS is missing!"; exit 1; fi
-          if [ -z "${{ secrets.WALLET_PRIVATE_KEY }}" ] && [ -z "${{ secrets.WALLET_MNEMONIC }}" ]; then echo "❌ WALLET_PRIVATE_KEY or WALLET_MNEMONIC is missing!"; exit 1; fi
-          if [ -z "${{ secrets.CDT_CONTRACT }}" ]; then echo "❌ CDT_CONTRACT is missing!"; exit 1; fi
-          if [ -z "${{ secrets.FIXED_RATE }}" ]; then echo "⚠️ FIXED_RATE is missing! Using default value 20000"; fi
-          echo "✅ All required environment variables are set."
+          npm install dotenv node-fetch @ton/core
 
       - name: Run swap script
         env:
@@ -41,10 +30,4 @@ jobs:
           WALLET_PRIVATE_KEY: ${{ secrets.WALLET_PRIVATE_KEY }}
           CDT_CONTRACT: ${{ secrets.CDT_CONTRACT }}
           FIXED_RATE: ${{ secrets.FIXED_RATE }}
-        run: |
-          echo "🚀 Starting swap process..."
-          echo "Wallet: $WALLET_ADDRESS"
-          echo "CDT Contract: $CDT_CONTRACT"
-          echo "Fixed rate: $FIXED_RATE"
-          node src/swap.js || { echo "❌ Swap script failed!"; exit 1; }
-          echo "✅ Swap process finished successfully."
+        run: node src/swap.js
