@@ -1,33 +1,27 @@
-name: CDT Swap Listener
+name: TON to CDT Swap
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "*/5 * * * *" # Runs every 5 minutes
 
 jobs:
-  check-swaps:
+  swap:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v3
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18
+          node-version: '18'
 
       - name: Install dependencies
-        run: |
-          npm install dotenv node-fetch @ton/core
+        run: npm install @ton/ton @ton/crypto node-fetch dotenv
 
-      - name: Run swap script
+      - name: Run swap
+        run: node src/swap.js
         env:
           TONCENTER_API_KEY: ${{ secrets.TONCENTER_API_KEY }}
-          WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
           WALLET_MNEMONIC: ${{ secrets.WALLET_MNEMONIC }}
-          WALLET_PRIVATE_KEY: ${{ secrets.WALLET_PRIVATE_KEY }}
           CDT_CONTRACT: ${{ secrets.CDT_CONTRACT }}
           FIXED_RATE: ${{ secrets.FIXED_RATE }}
-        run: node src/swap.js
