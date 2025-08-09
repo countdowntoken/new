@@ -1,46 +1,86 @@
-name: TON-CDT Swap
+import 'dotenv/config';
+import fetch from 'node-fetch';
+import { mnemonicToPrivateKey } from '@ton/crypto';
+import { TonClient, WalletContractV4, internal } from '@ton/ton';
 
-on:
-  workflow_dispatch:
+const {
+  TONCENTER_API_KEY,
+  WALLET_ADDRESS,
+  WALLET_MNEMONIC,
+  WALLET_PRIVATE_KEY,
+  CDT_CONTRACT,
+  FIXED_RATE
+} = process.env;
 
-jobs:
-  run-swap:
-    runs-on: ubuntu-latest
+if (!TONCENTER_API_KEY || !WALLET_ADDRESS || (!WALLET_MNEMONIC && !WALLET_PRIVATE_KEY) || !CDT_CONTRACT) {
+  console.error('Missing environment variables. Set TONCENTER_API_KEY, WALLET_ADDRESS, WALLET_MNEMONIC (or WALLET_PRIVATE_KEY), CDT_CONTRACT.');
+  process.exit(1);
+}
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+(async () => {
+  try {
+    console.log('🔹 Connecting to TON center API...');
+    const client = new TonClient({
+      endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+      apiKey: TONCENTER_API_KEY
+    });
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
+    console.log(`🔹 Wallet Address: ${WALLET_ADDRESS}`);
+    console.log(`🔹 CDT Contract: ${CDT_CONTRACT}`);
+    console.log(`🔹 Fixed Rate: ${FIXED_RATE}`);
 
-      - name: Install dependencies
-        run: npm install
+    let keyPair;
+    if (WALLET_MNEMONIC) {
+      console.log('🔹 Importing wallet from mnemonic...');
+      keyPair = await mnemonicToPrivateKey(WALLET_MNEMONIC.split(' '));
+    } else {
+      console.log('🔹 Using provided private key...');
+      keyPair = { secretKey: Buffer.from(WALLET_PRIVATE_KEY, 'hex') };
+    }
 
-      - name: Show environment variables (debug)
-        run: |
-          echo "TONCENTER_API_KEY=$TONCENTER_API_KEY"
-          echo "WALLET_ADDRESS=$WALLET_ADDRESS"
-          echo "WALLET_MNEMONIC=$WALLET_MNEMONIC"
-          echo "WALLET_PRIVATE_KEY=$WALLET_PRIVATE_KEY"
-          echo "CDT_CONTRACT=$CDT_CONTRACT"
-          echo "FIXED_RATE=$FIXED_RATE"
-        env:
-          TONCENTER_API_KEY: ${{ secrets.TONCENTER_API_KEY }}
-          WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
-          WALLET_MNEMONIC: ${{ secrets.WALLET_MNEMONIC }}
-          WALLET_PRIVATE_KEY: ${{ secrets.WALLET_PRIVATE_KEY }}
-          CDT_CONTRACT: ${{ secrets.CDT_CONTRACT }}
-          FIXED_RATE: ${{ secrets.FIXED_RATE }}
+    const wallet = WalletContractV4.create({
+      workchain: 0,
+      publicKey: keyPair.publicKey
+    });
 
-      - name: Run swap script
-        run: node src/swap.js
-        env:
-          TONCENTER_API_KEY: ${{ secrets.TONCENTER_API_KEY }}
-          WALLET_ADDRESS: ${{ secrets.WALLET_ADDRESS }}
-          WALLET_MNEMONIC: ${{ secrets.WALLET_MNEMONIC }}
-          WALLET_PRIVATE_KEY: ${{ secrets.WALLET_PRIVATE_KEY }}
-          CDT_CONTRACT: ${{ secrets.CDT_CONTRACT }}
-          FIXED_RATE: ${{ secrets.FIXED_RATE }}
+    console.log('🔹 Getting wallet balance...');
+    const balance = await client.getBalance(wallet.address);
+    console.log(`💰 Wallet Balance: ${balance / 1e9} TON`);
+
+    console.log('🔹 Fetching incoming transactions...');
+    const tx = await client.getTransactions(WALLET_ADDRESS, { limit: 1 });
+    console.log('📜 Latest Transaction:', tx);
+
+    if (tx.length === 0) {
+      console.log('⚠️ No transactions found.');
+      return;
+    }
+
+    const lastTx = tx[0];
+    if (!lastTx.in_msg || !lastTx.in_msg.value) {
+      console.log('⚠️ No TON received in last transaction.');
+      return;
+    }
+
+    const tonAmount = parseInt(lastTx.in_msg.value) / 1e9;
+    console.log(`💎 Received TON: ${tonAmount}`);
+
+    const cdtAmount = tonAmount * parseFloat(FIXED_RATE);
+    console.log(`🔄 Will send CDT amount: ${cdtAmount}`);
+
+    console.log('🔹 Sending CDT...');
+    await client.sendExternalMessage(wallet, wallet.createTransfer({
+      secretKey: keyPair.secretKey,
+      toAddress: CDT_CONTRACT,
+      amount: BigInt(Math.floor(cdtAmount * 1e9)),
+      seqno: await wallet.getSeqno(client),
+      sendMode: 3
+    }));
+
+    console.log('✅ Swap completed successfully.');
+
+  } catch (err) {
+    console.error('❌ Error during swap process:', err);
+    process.exit(1);
+  }
+})();
