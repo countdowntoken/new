@@ -1,62 +1,76 @@
-import 'dotenv/config';
 import fetch from 'node-fetch';
-import { Address } from '@ton/core';
+import dotenv from 'dotenv';
+import { mnemonicToWalletKey } from '@ton/crypto';
+import { TonClient, WalletContractV4, beginCell, toNano, Address } from '@ton/ton';
 
-// Normalize TON address to bounceable, URL-safe format
-function normalizeAddress(addr) {
-    try {
-        return Address.parse(addr).toString({ bounceable: true, urlSafe: true });
-    } catch (e) {
-        console.error("Invalid address:", addr);
-        return addr;
-    }
+dotenv.config();
+
+const API_KEY = process.env.TONCENTER_API_KEY;
+const WALLET_MNEMONIC = process.env.WALLET_MNEMONIC;
+const CDT_CONTRACT = process.env.CDT_CONTRACT;
+const FIXED_RATE = parseFloat(process.env.FIXED_RATE || '20000'); // 1 TON = FIXED_RATE CDT
+
+if (!API_KEY || !WALLET_MNEMONIC || !CDT_CONTRACT) {
+    console.error('Missing environment variables.');
+    process.exit(1);
 }
 
-// Environment variables
-const API_KEY = process.env.TONCENTER_API_KEY;
-const PROJECT_WALLET = normalizeAddress(process.env.WALLET_ADDRESS);
-const CDT_CONTRACT = process.env.CDT_CONTRACT;
-const RATE = parseFloat(process.env.FIXED_RATE) || 20000;
+const client = new TonClient({
+    endpoint: 'https://toncenter.com/api/v2/jsonRPC',
+    apiKey: API_KEY
+});
 
-// Fetch recent transactions for the project wallet
-async function fetchTransactions() {
-    const url = `https://toncenter.com/api/v2/getTransactions?address=${PROJECT_WALLET}&limit=10&api_key=${API_KEY}`;
-    const res = await fetch(url);
+async function sendCDT(toAddress, tonAmount) {
+    const key = await mnemonicToWalletKey(WALLET_MNEMONIC.split(' '));
+    const wallet = WalletContractV4.create({ publicKey: key.publicKey, workchain: 0 });
+    const contract = client.open(wallet);
+
+    const amountCDT = toNano((tonAmount * FIXED_RATE).toString());
+
+    const jettonPayload = beginCell()
+        .storeUint(0x0f8a7ea5, 32)
+        .storeUint(0, 64)
+        .storeCoins(amountCDT)
+        .storeAddress(Address.parse(toAddress))
+        .storeAddress(Address.parse(WALLET_MNEMONIC)) // response destination
+        .storeUint(0, 1)
+        .storeCoins(toNano('0.05'))
+        .storeUint(0, 1)
+        .endCell();
+
+    await contract.sendTransfer(key.secretKey, {
+        to: Address.parse(CDT_CONTRACT),
+        value: toNano('0.1'),
+        body: jettonPayload
+    });
+
+    console.log(`Sent ${tonAmount * FIXED_RATE} CDT to ${toAddress}`);
+}
+
+async function checkTransactions() {
+    const walletAddress = (await mnemonicToWalletKey(WALLET_MNEMONIC.split(' '))).publicKey;
+    const wallet = WalletContractV4.create({ publicKey: walletAddress, workchain: 0 });
+    const address = wallet.address.toString({ bounceable: true });
+
+    console.log(`Listening for new transactions on: ${address}`);
+
+    const res = await fetch(`https://toncenter.com/api/v2/getTransactions?address=${address}&limit=5&api_key=${API_KEY}`);
     const data = await res.json();
 
-    if (!data.ok) {
-        console.error("Error fetching transactions:", data);
-        return [];
+    if (!data.result) {
+        console.error('No transactions found.');
+        return;
     }
 
-    return data.result;
-}
+    for (const tx of data.result) {
+        if (tx.in_msg && parseFloat(tx.in_msg.value) > 0) {
+            const sender = Address.parse(tx.in_msg.source).toString({ bounceable: true });
+            const tonAmount = parseFloat(tx.in_msg.value) / 1e9;
+            console.log(`Incoming: ${tonAmount} TON from ${sender}`);
 
-// Process each transaction
-async function processTransactions() {
-    const transactions = await fetchTransactions();
-    console.log(`\n--- Checking last ${transactions.length} transactions ---\n`);
-
-    for (const tx of transactions) {
-        const sender = normalizeAddress(tx.in_msg.source);
-        const amountTon = tx.in_msg.value / 1e9;
-        const hash = tx.transaction_id.hash;
-        const time = new Date(tx.utime * 1000).toLocaleString();
-
-        console.log(`From: ${sender}`);
-        console.log(`Amount: ${amountTon} TON`);
-        console.log(`Hash: ${hash}`);
-        console.log(`Time: ${time}`);
-
-        if (sender === PROJECT_WALLET) {
-            console.log("✅ Transaction is from the project wallet.");
-        } else {
-            console.log("⛔ Transaction is NOT from the project wallet.");
+            await sendCDT(sender, tonAmount);
         }
-
-        console.log("-----------------------------");
     }
 }
 
-// Start process
-processTransactions().catch(console.error);
+checkTransactions();
